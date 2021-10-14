@@ -95,3 +95,21 @@ sys_uptime(void)
   release(&tickslock);
   return xticks;
 }
+
+//return 
+// if input 1 -> # of processes in the system,
+// if input 2 -> # total number of system calls that the current process has made
+// if input 3 -> # of memory pages currentprocess is using
+void
+sys_info(void)
+{
+  int param;
+  argint(0, &param);
+
+  if(param == 1) 
+    printf("Number of processes %d\n", get_process_count());
+  else if(param == 2)
+    printf("Number of system calls made %d\n", get_syscall_count());
+  else if(param == 3)
+    printf("Number of pages: %d\n", get_page_count());
+} 

@@ -654,3 +654,41 @@ procdump(void)
     printf("\n");
   }
 }
+
+//return process count
+uint64
+get_process_count()
+{
+  struct proc *p;
+  uint64 cnt = 0; 
+
+  for(p = proc; p < &proc[NPROC]; p++) {
+    if(p != myproc()){
+      acquire(&p->lock);
+      if(p->state != UNUSED){
+        cnt++;
+      }
+      release(&p->lock);
+    }
+  }
+
+  return cnt;
+}
+
+//return sys call count
+uint64
+get_syscall_count()
+{
+  struct proc *p = myproc();
+  
+  return p->syscall_count;
+}
+
+//return page count
+uint64
+get_page_count()
+{
+  struct proc *p = myproc();
+  
+  return sizeof(p->pagetable);  
+}
