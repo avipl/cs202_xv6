@@ -689,6 +689,6 @@ uint64
 get_page_count()
 {
   struct proc *p = myproc();
-  
-  return sizeof(p->pagetable);  
+
+  return PGROUNDUP(p->sz)/PGSIZE;
 }
