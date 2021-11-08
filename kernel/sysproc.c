@@ -95,3 +95,34 @@ sys_uptime(void)
   release(&tickslock);
   return xticks;
 }
+
+//Stride scheduler, store stride value and calculate pass value
+uint64
+sys_init_stride(void)
+{
+  int tickets;
+  char name[16];
+  uint curr_ticks;
+
+  argstr(0, name, 16);
+  argint(1, &tickets);
+  
+  acquire(&tickslock);
+  curr_ticks = ticks;
+  release(&tickslock);
+
+  #ifdef STRIDE
+  init_stride_vars(name, tickets, curr_ticks);
+  #endif
+
+  return 0;
+}
+
+//print the scheduler stats
+uint64
+sys_sched_statistics(void)
+{
+  print_ticks_used();
+
+  return 0;
+}

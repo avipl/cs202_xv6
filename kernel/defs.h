@@ -95,6 +95,7 @@ struct cpu*     getmycpu(void);
 struct proc*    myproc();
 void            procinit(void);
 void            scheduler(void) __attribute__((noreturn));
+void            stride_scheduler(struct cpu*);
 void            sched(void);
 void            sleep(void*, struct spinlock*);
 void            userinit(void);
@@ -104,6 +105,8 @@ void            yield(void);
 int             either_copyout(int user_dst, uint64 dst, void *src, uint64 len);
 int             either_copyin(void *dst, int user_src, uint64 src, uint64 len);
 void            procdump(void);
+void            init_stride_vars(char*, int, uint64);
+void            print_ticks_used();
 
 // swtch.S
 void            swtch(struct context*, struct context*);

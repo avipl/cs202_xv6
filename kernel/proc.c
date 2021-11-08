@@ -437,7 +437,6 @@ wait(uint64 addr)
 void
 scheduler(void)
 {
-  struct proc *p;
   struct cpu *c = mycpu();
   
   c->proc = 0;
@@ -445,22 +444,54 @@ scheduler(void)
     // Avoid deadlock by ensuring that devices can interrupt.
     intr_on();
 
-    for(p = proc; p < &proc[NPROC]; p++) {
-      acquire(&p->lock);
-      if(p->state == RUNNABLE) {
-        // Switch to chosen process.  It is the process's job
-        // to release its lock and then reacquire it
-        // before jumping back to us.
-        p->state = RUNNING;
-        c->proc = p;
-        swtch(&c->context, &p->context);
+    #ifdef STRIDE
+    stride_scheduler(c);
+    #endif
+  }
+}
 
-        // Process is done running for now.
-        // It should have changed its p->state before coming back.
-        c->proc = 0;
-      }
-      release(&p->lock);
+void
+stride_scheduler(struct cpu *c){
+  struct proc *p;
+  
+  int min = INT_MAX;
+  struct proc *nextProc = 0;
+  //search for a RUNNABLE process with minimum 'pass' value
+  for(p = proc; p < &proc[NPROC]; p++) {
+    acquire(&p->lock);
+    if(p->state == RUNNABLE && min > p->passValue){
+      min = p->passValue;
+      nextProc = p;
     }
+    release(&p->lock);
+  }
+
+  if(nextProc){
+    acquire(&nextProc->lock);
+    // Switch to chosen process.  It is the process's job
+    // to release its lock and then reacquire it
+    // before jumping back to us.
+    nextProc->state = RUNNING;
+
+    //increase 'pass' value
+    nextProc->passValue += nextProc->stride;
+    acquire(&tickslock);
+    uint start_ticks = ticks;
+    release(&tickslock);
+
+    c->proc = nextProc;
+    swtch(&c->context, &nextProc->context);
+
+    acquire(&tickslock);
+    uint end_ticks = ticks;
+    release(&tickslock);
+
+    nextProc->ticks_used += (end_ticks - start_ticks);
+
+    // Process is done running for now.
+    // It should have changed its nextProc->state before coming back.
+    c->proc = 0;
+    release(&nextProc->lock);
   }
 }
 
@@ -652,5 +683,35 @@ procdump(void)
       state = "???";
     printf("%d %s %s", p->pid, state, p->name);
     printf("\n");
+  }
+}
+
+void
+init_stride_vars(char *name, int tickets, uint64 curr_ticks)
+{
+  struct proc *p = myproc();
+
+  safestrcpy(name, p->name, 16);
+
+  int stride = (MAX_STRIDE / tickets);
+  p->stride = stride;
+  p->passValue = stride;
+
+  p->ticks_used = 0;
+}
+
+void
+print_ticks_used()
+{
+  struct proc *p;
+
+  for(p = proc; p < &proc[NPROC]; p++){
+    if(strncmp(p->name,  "prog1", 16) == 0 ||
+      strncmp(p->name, "prog2", 16) == 0 ||
+      strncmp(p->name, "prog3", 16) == 0
+    )
+    {
+      printf("\n%s : %d", p->name, p->ticks_used);
+    }
   }
 }
