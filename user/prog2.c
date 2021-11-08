@@ -5,7 +5,7 @@
 int main(int argc, char *argv[]){
 
     //assign ticket to this program
-    int ticket = 40;
+    int ticket = 20;
     assign(ticket);
     // char* name = "prog2";
     // assign(ticket, "prog2");

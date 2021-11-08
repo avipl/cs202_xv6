@@ -27,8 +27,6 @@ extern char trampoline[]; // trampoline.S
 // must be acquired before any p->lock.
 struct spinlock wait_lock;
 
-int ticket_num;
-
 // Allocate a page for each process's kernel stack.
 // Map it high in memory, followed by an invalid
 // guard page.
@@ -122,7 +120,6 @@ allocproc(void)
 found:
   p->pid = allocpid();
   p->ticket = 100;
-  ticket_num += p->ticket;
   p->stride = 1000000/p->ticket;
   p->pass = p->stride;
   p->state = USED;
@@ -378,7 +375,6 @@ exit(int status)
 
   p->xstate = status;
   p->state = ZOMBIE;
-  ticket_num -= p->ticket;
   release(&wait_lock);
 
   // Jump into the scheduler, never to return.
@@ -439,9 +435,7 @@ wait(uint64 addr)
 void assign(int num){
   struct proc *p = myproc();
   acquire(&p->lock);
-  ticket_num -= p->ticket;
   p->ticket = num;
-  ticket_num = ticket_num + num;
   // strncpy(p->name, name, 16);
   #ifdef STRIDE
   p->stride = 1000000/p->ticket;
@@ -478,9 +472,18 @@ scheduler(void)
     for(;;){
       // Avoid deadlock by ensuring that devices can interrupt.
       intr_on();
-      winner = rand() % ticket_num;
+      int ticket_sum = 0;
+      for(p = proc; p < &proc[NPROC]; p++){
+        acquire(&p->lock);
+        if(p->state == RUNNABLE){
+          ticket_sum += p->ticket;
+        }
+        release(&p->lock);
+      }
+
+      winner = rand() % ticket_sum;
       while(winner < 0){
-        winner += ticket_num;
+        winner += ticket_sum;
       }
       for(p = proc; p < &proc[NPROC]; p++){
         acquire(&p->lock);
