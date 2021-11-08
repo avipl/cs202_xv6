@@ -95,3 +95,17 @@ sys_uptime(void)
   release(&tickslock);
   return xticks;
 }
+
+// void sys_assign(int num, char* name){
+void sys_assign(int num){
+  argint(0, &num);
+  // argstr(1, name, 16);
+  // assign(num, name);
+  assign(num);
+  return;
+}
+
+void sys_sched_stat(void){
+  sched_stat();
+  return;
+}

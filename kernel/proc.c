@@ -5,6 +5,7 @@
 #include "spinlock.h"
 #include "proc.h"
 #include "defs.h"
+#include "rand.h"
 
 struct cpu cpus[NCPU];
 
@@ -25,6 +26,8 @@ extern char trampoline[]; // trampoline.S
 // memory model when using p->parent.
 // must be acquired before any p->lock.
 struct spinlock wait_lock;
+
+int ticket_num;
 
 // Allocate a page for each process's kernel stack.
 // Map it high in memory, followed by an invalid
@@ -118,6 +121,10 @@ allocproc(void)
 
 found:
   p->pid = allocpid();
+  p->ticket = 100;
+  ticket_num += p->ticket;
+  p->stride = 1000000/p->ticket;
+  p->pass = p->stride;
   p->state = USED;
 
   // Allocate a trapframe page.
@@ -155,6 +162,7 @@ freeproc(struct proc *p)
   p->trapframe = 0;
   if(p->pagetable)
     proc_freepagetable(p->pagetable, p->sz);
+  p->ticket = 0;
   p->pagetable = 0;
   p->sz = 0;
   p->pid = 0;
@@ -370,7 +378,7 @@ exit(int status)
 
   p->xstate = status;
   p->state = ZOMBIE;
-
+  ticket_num -= p->ticket;
   release(&wait_lock);
 
   // Jump into the scheduler, never to return.
@@ -427,6 +435,26 @@ wait(uint64 addr)
   }
 }
 
+// void assign(int num, char* name){
+void assign(int num){
+  struct proc *p = myproc();
+  acquire(&p->lock);
+  ticket_num -= p->ticket;
+  p->ticket = num;
+  ticket_num = ticket_num + num;
+  // strncpy(p->name, name, 16);
+  #ifdef STRIDE
+  p->stride = 1000000/p->ticket;
+  p->pass = p->stride;
+  #endif
+  release(&p->lock);
+  return;
+}
+
+void sched_stat(void){
+  // struct proc *p;
+  return;
+}
 // Per-CPU process scheduler.
 // Each CPU calls scheduler() after setting itself up.
 // Scheduler never returns.  It loops, doing:
@@ -439,29 +467,75 @@ scheduler(void)
 {
   struct proc *p;
   struct cpu *c = mycpu();
-  
   c->proc = 0;
-  for(;;){
-    // Avoid deadlock by ensuring that devices can interrupt.
-    intr_on();
 
-    for(p = proc; p < &proc[NPROC]; p++) {
-      acquire(&p->lock);
-      if(p->state == RUNNABLE) {
-        // Switch to chosen process.  It is the process's job
-        // to release its lock and then reacquire it
-        // before jumping back to us.
-        p->state = RUNNING;
-        c->proc = p;
-        swtch(&c->context, &p->context);
-
-        // Process is done running for now.
-        // It should have changed its p->state before coming back.
-        c->proc = 0;
+  
+  #ifdef LOTTERY
+    int winner;
+    acquire(&tickslock);
+    srand(ticks);
+    release(&tickslock);
+    for(;;){
+      // Avoid deadlock by ensuring that devices can interrupt.
+      intr_on();
+      winner = rand() % ticket_num;
+      while(winner < 0){
+        winner += ticket_num;
       }
-      release(&p->lock);
+      for(p = proc; p < &proc[NPROC]; p++){
+        acquire(&p->lock);
+        if(p->state == RUNNABLE){
+          if(p->ticket >= winner){
+            p->state = RUNNING;
+            c->proc = p;
+
+            acquire(&tickslock);
+            int start_tick = ticks;
+            release(&tickslock);
+
+            swtch(&c->context, &p->context);
+
+            acquire(&tickslock);
+            int end_tick = ticks;
+            release(&tickslock);
+            p->sched_tick += end_tick - start_tick;
+            c->proc = 0;
+            release(&p->lock);
+            break;
+          }else{
+            winner = winner - p->ticket;
+          }
+        }
+        release(&p->lock);
+      }
     }
-  }
+  #endif
+
+  #ifdef STRIDE
+   for(;;){
+      // Avoid deadlock by ensuring that devices can interrupt.
+      int min=1000000;
+      struct proc *lowest = proc;
+      
+      intr_on();
+      for(p = proc; p < &proc[NPROC]; p++){
+        acquire(&p->lock);
+        if(p->state == RUNNABLE){
+          if(p->pass < min){
+            min = p->pass;
+            lowest = p;
+          }
+        }
+        release(&p->lock);
+      }
+      acquire(&lowest->lock);
+      lowest->state = RUNNING;
+      c->proc = lowest;
+      swtch(&c->context, &lowest->context);
+      c->proc = 0;
+      release(&lowest->lock);
+    }
+  #endif
 }
 
 // Switch to scheduler.  Must hold only p->lock
