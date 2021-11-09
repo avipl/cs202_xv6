@@ -28,7 +28,8 @@ OBJS = \
   $K/sysfile.o \
   $K/kernelvec.o \
   $K/plic.o \
-  $K/virtio_disk.o
+  $K/virtio_disk.o \
+  $K/rand.o
 
 # riscv64-unknown-elf- or riscv64-linux-gnu-
 # perhaps in /opt/riscv/bin
@@ -70,9 +71,8 @@ endif
 ifneq ($(shell $(CC) -dumpspecs 2>/dev/null | grep -e '[^f]nopie'),)
 CFLAGS += -fno-pie -nopie
 endif
-
-LAB2 = STRIDE 
-CFLAGS += -D$(LAB2) 
+LAB2 = LOTTERY
+CFLAGS += -D$(LAB2)
 
 LDFLAGS = -z max-page-size=4096
 

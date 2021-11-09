@@ -36,5 +36,5 @@ entry("getpid");
 entry("sbrk");
 entry("sleep");
 entry("uptime");
-entry("init_stride");
+entry("assign");
 entry("sched_statistics");

@@ -3,9 +3,7 @@
 #include "user/user.h" 
 int main(int argc, char *argv[]) 
 { 
-    #ifdef STRIDE
-    init_stride("prog1", 30);    // write your own function here 
-    #endif
+    assign(30, "prog1");    // write your own function here 
 
     int i,k; 
     const int loop=100000; // adjust this parameter depending on your system speed 

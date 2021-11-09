@@ -23,7 +23,7 @@ int getpid(void);
 char* sbrk(int);
 int sleep(int);
 int uptime(void);
-int init_stride(char*, int);
+int assign(int, char*);
 int sched_statistics(void);
 
 // ulib.c

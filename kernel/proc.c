@@ -5,6 +5,7 @@
 #include "spinlock.h"
 #include "proc.h"
 #include "defs.h"
+#include "rand.h"
 
 struct cpu cpus[NCPU];
 
@@ -118,7 +119,13 @@ allocproc(void)
 
 found:
   p->pid = allocpid();
+  p->ticket = 100;
   p->state = USED;
+
+  #ifdef STRIDE
+  p->stride = MAX_STRIDE/p->ticket;
+  p->pass = p->stride;
+  #endif
 
   // Allocate a trapframe page.
   if((p->trapframe = (struct trapframe *)kalloc()) == 0){
@@ -155,6 +162,7 @@ freeproc(struct proc *p)
   p->trapframe = 0;
   if(p->pagetable)
     proc_freepagetable(p->pagetable, p->sz);
+  p->ticket = 0;
   p->pagetable = 0;
   p->sz = 0;
   p->pid = 0;
@@ -370,7 +378,6 @@ exit(int status)
 
   p->xstate = status;
   p->state = ZOMBIE;
-
   release(&wait_lock);
 
   // Jump into the scheduler, never to return.
@@ -438,8 +445,8 @@ void
 scheduler(void)
 {
   struct cpu *c = mycpu();
-  
   c->proc = 0;
+
   for(;;){
     // Avoid deadlock by ensuring that devices can interrupt.
     intr_on();
@@ -447,9 +454,14 @@ scheduler(void)
     #ifdef STRIDE
     stride_scheduler(c);
     #endif
+
+    #ifdef LOTTERY
+    lottery_scheduler(c);
+    #endif
   }
 }
 
+#ifdef STRIDE
 void
 stride_scheduler(struct cpu *c){
   struct proc *p;
@@ -459,8 +471,8 @@ stride_scheduler(struct cpu *c){
   //search for a RUNNABLE process with minimum 'pass' value
   for(p = proc; p < &proc[NPROC]; p++) {
     acquire(&p->lock);
-    if(p->state == RUNNABLE && min > p->passValue){
-      min = p->passValue;
+    if(p->state == RUNNABLE && min > p->pass){
+      min = p->pass;
       nextProc = p;
     }
     release(&p->lock);
@@ -474,7 +486,7 @@ stride_scheduler(struct cpu *c){
     nextProc->state = RUNNING;
 
     //increase 'pass' value
-    nextProc->passValue += nextProc->stride;
+    nextProc->pass += nextProc->stride;
     acquire(&tickslock);
     uint start_ticks = ticks;
     release(&tickslock);
@@ -494,6 +506,61 @@ stride_scheduler(struct cpu *c){
     release(&nextProc->lock);
   }
 }
+#endif
+
+#ifdef LOTTERY
+void
+lottery_scheduler(struct cpu *c)
+{
+  struct proc *p;
+
+  int winner;
+  acquire(&tickslock);
+  srand(ticks);
+  release(&tickslock);
+
+  int ticket_sum = 0;
+  for(p = proc; p < &proc[NPROC]; p++){
+    acquire(&p->lock);
+    if(p->state == RUNNABLE){
+      ticket_sum += p->ticket;
+    }
+    release(&p->lock);
+  }
+
+  winner = rand() % ticket_sum;
+  while(winner < 0){
+    winner += ticket_sum;
+  }
+  for(p = proc; p < &proc[NPROC]; p++){
+    acquire(&p->lock);
+    if(p->state == RUNNABLE){
+      if(p->ticket >= winner){
+        p->state = RUNNING;
+        c->proc = p;
+
+        acquire(&tickslock);
+        int start_tick = ticks;
+        release(&tickslock);
+
+        swtch(&c->context, &p->context);
+
+        acquire(&tickslock);
+        int end_tick = ticks;
+        release(&tickslock);
+        p->ticks_used += end_tick - start_tick;
+        
+        c->proc = 0;
+        release(&p->lock);
+        break;
+      }else{
+        winner = winner - p->ticket;
+      }
+    }
+    release(&p->lock);
+  }
+}
+#endif
 
 // Switch to scheduler.  Must hold only p->lock
 // and have changed proc->state. Saves and restores
@@ -686,18 +753,20 @@ procdump(void)
   }
 }
 
-void
-init_stride_vars(char *name, int tickets, uint64 curr_ticks)
-{
+void assign(int ticket, char *name){
   struct proc *p = myproc();
 
+  p->ticket = ticket;
   safestrcpy(name, p->name, 16);
 
-  int stride = (MAX_STRIDE / tickets);
-  p->stride = stride;
-  p->passValue = stride;
+  #ifdef STRIDE
+  p->stride = MAX_STRIDE/p->ticket;
+  p->pass = p->stride;
+  #endif
 
   p->ticks_used = 0;
+  
+  return;
 }
 
 void

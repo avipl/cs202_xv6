@@ -106,9 +106,10 @@ struct proc {
   struct inode *cwd;           // Current directory
   char name[16];               // Process name (debugging)
   uint64 ticks_used;
+  int ticket;                  // tickets for lottery scheduling
 
   #ifdef STRIDE
-  int passValue;
+  int pass;
   int stride;
   #endif
 };
