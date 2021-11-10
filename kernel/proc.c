@@ -7,6 +7,8 @@
 #include "defs.h"
 #include "rand.h"
 
+#define TRACKER_LENGTH 100
+
 struct cpu cpus[NCPU];
 
 struct proc proc[NPROC];
@@ -447,120 +449,151 @@ scheduler(void)
   struct cpu *c = mycpu();
   c->proc = 0;
 
+  int cnt = 0;
+  int tracker[100];
+
+  struct proc *p;
+
+  uint start_ticks;
+  uint end_ticks;
+
   for(;;){
     // Avoid deadlock by ensuring that devices can interrupt.
     intr_on();
-
     #ifdef STRIDE
-    stride_scheduler(c);
+
+    int min = INT_MAX;
+    struct proc *nextProc = 0;
+    //search for a RUNNABLE process with minimum 'pass' value
+    for(p = proc; p < &proc[NPROC]; p++) {
+      acquire(&p->lock);
+      if(p->state == RUNNABLE && min > p->pass){
+        min = p->pass;
+        nextProc = p;
+      }
+      release(&p->lock);
+    }
+
+    if(nextProc){
+      if(strncmp(nextProc->name, "prog1", 16) == 0){
+        tracker[cnt] = 1;
+        cnt++;
+      }else if(strncmp(nextProc->name, "prog2", 16) == 0){
+        tracker[cnt] = 2;
+        cnt++;
+      }else if(strncmp(nextProc->name, "prog3", 16) == 0){
+        tracker[cnt] = 3;
+        cnt++;
+      }
+      if (cnt == TRACKER_LENGTH){
+        printf("tracker: \n");
+        for(int i=1; i<TRACKER_LENGTH+1; i++){
+          printf("%d\t", tracker[i-1]);
+          if(i % 10 == 0){
+            printf("\n");
+          }
+        }
+      }
+      acquire(&nextProc->lock);
+      // Switch to chosen process.  It is the process's job
+      // to release its lock and then reacquire it
+      // before jumping back to us.
+      nextProc->state = RUNNING;
+
+      //increase 'pass' value
+      nextProc->pass += nextProc->stride;
+      acquire(&tickslock);
+      start_ticks = ticks;
+      release(&tickslock);
+
+      c->proc = nextProc;
+      swtch(&c->context, &nextProc->context);
+
+      acquire(&tickslock);
+      end_ticks = ticks;
+      release(&tickslock);
+
+      nextProc->ticks_used += (end_ticks - start_ticks);
+
+      // Process is done running for now.
+      // It should have changed its nextProc->state before coming back.
+      c->proc = 0;
+      release(&nextProc->lock);
+    }
     #endif
 
     #ifdef LOTTERY
-    lottery_scheduler(c);
+
+    int winner;
+    acquire(&tickslock);
+    srand(ticks);
+    release(&tickslock);
+
+    int ticket_sum = 0;
+
+    for(p = proc; p < &proc[NPROC]; p++){
+      acquire(&p->lock);
+      if(p->state == RUNNABLE){
+        ticket_sum += p->ticket;
+      }
+      release(&p->lock);
+    }
+
+    winner = rand() % ticket_sum;
+    while(winner < 0){
+      winner += ticket_sum;
+    }
+
+    for(p = proc; p < &proc[NPROC]; p++){
+      acquire(&p->lock);
+      if(p->state == RUNNABLE){
+        if(p->ticket >= winner){
+          if(strncmp(p->name, "prog1", 16) == 0){
+            tracker[cnt] = 1;
+            cnt++;
+          }else if(strncmp(p->name, "prog2", 16) == 0){
+            tracker[cnt] = 2;
+            cnt++;
+          }else if(strncmp(p->name, "prog3", 16) == 0){
+            tracker[cnt] = 3;
+            cnt++;
+          }
+          if (cnt == TRACKER_LENGTH){
+            printf("tracker: \n");
+            for(int i=0; i<TRACKER_LENGTH; i++){
+              printf("%d\t", tracker[i]);
+              if(i % 10 == 0){
+                printf("\n");
+              }
+            }
+          }
+          p->state = RUNNING;
+          c->proc = p;
+
+          acquire(&tickslock);
+          start_ticks = ticks;
+          release(&tickslock);
+
+          swtch(&c->context, &p->context);
+
+          acquire(&tickslock);
+          end_ticks = ticks;
+          release(&tickslock);
+          p->ticks_used += end_ticks - start_ticks;
+          
+          c->proc = 0;
+          release(&p->lock);
+          break;
+        }else{
+          winner = winner - p->ticket;
+        }
+      }
+      release(&p->lock);
+    }
     #endif
   }
 }
 
-#ifdef STRIDE
-void
-stride_scheduler(struct cpu *c){
-  struct proc *p;
-  
-  int min = INT_MAX;
-  struct proc *nextProc = 0;
-  //search for a RUNNABLE process with minimum 'pass' value
-  for(p = proc; p < &proc[NPROC]; p++) {
-    acquire(&p->lock);
-    if(p->state == RUNNABLE && min > p->pass){
-      min = p->pass;
-      nextProc = p;
-    }
-    release(&p->lock);
-  }
-
-  if(nextProc){
-    acquire(&nextProc->lock);
-    // Switch to chosen process.  It is the process's job
-    // to release its lock and then reacquire it
-    // before jumping back to us.
-    nextProc->state = RUNNING;
-
-    //increase 'pass' value
-    nextProc->pass += nextProc->stride;
-    acquire(&tickslock);
-    uint start_ticks = ticks;
-    release(&tickslock);
-
-    c->proc = nextProc;
-    swtch(&c->context, &nextProc->context);
-
-    acquire(&tickslock);
-    uint end_ticks = ticks;
-    release(&tickslock);
-
-    nextProc->ticks_used += (end_ticks - start_ticks);
-
-    // Process is done running for now.
-    // It should have changed its nextProc->state before coming back.
-    c->proc = 0;
-    release(&nextProc->lock);
-  }
-}
-#endif
-
-#ifdef LOTTERY
-void
-lottery_scheduler(struct cpu *c)
-{
-  struct proc *p;
-
-  int winner;
-  acquire(&tickslock);
-  srand(ticks);
-  release(&tickslock);
-
-  int ticket_sum = 0;
-  for(p = proc; p < &proc[NPROC]; p++){
-    acquire(&p->lock);
-    if(p->state == RUNNABLE){
-      ticket_sum += p->ticket;
-    }
-    release(&p->lock);
-  }
-
-  winner = rand() % ticket_sum;
-  while(winner < 0){
-    winner += ticket_sum;
-  }
-  for(p = proc; p < &proc[NPROC]; p++){
-    acquire(&p->lock);
-    if(p->state == RUNNABLE){
-      if(p->ticket >= winner){
-        p->state = RUNNING;
-        c->proc = p;
-
-        acquire(&tickslock);
-        int start_tick = ticks;
-        release(&tickslock);
-
-        swtch(&c->context, &p->context);
-
-        acquire(&tickslock);
-        int end_tick = ticks;
-        release(&tickslock);
-        p->ticks_used += end_tick - start_tick;
-        
-        c->proc = 0;
-        release(&p->lock);
-        break;
-      }else{
-        winner = winner - p->ticket;
-      }
-    }
-    release(&p->lock);
-  }
-}
-#endif
 
 // Switch to scheduler.  Must hold only p->lock
 // and have changed proc->state. Saves and restores
@@ -775,7 +808,7 @@ print_ticks_used()
   struct proc *p;
 
   for(p = proc; p < &proc[NPROC]; p++){
-    if(strncmp(p->name,  "prog1", 16) == 0 ||
+    if(strncmp(p->name, "prog1", 16) == 0 ||
       strncmp(p->name, "prog2", 16) == 0 ||
       strncmp(p->name, "prog3", 16) == 0
     )
