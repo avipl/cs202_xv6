@@ -119,6 +119,7 @@ allocproc(void)
 found:
   p->pid = allocpid();
   p->state = USED;
+  p->t_cnt = 0; //initialize thread count for the process
 
   // Allocate a trapframe page.
   if((p->trapframe = (struct trapframe *)kalloc()) == 0){
@@ -302,6 +303,8 @@ fork(void)
   np->cwd = idup(p->cwd);
 
   safestrcpy(np->name, p->name, sizeof(p->name));
+  //assign thread id as 0
+  np->tid = 0;
 
   pid = np->pid;
 
@@ -654,3 +657,115 @@ procdump(void)
     printf("\n");
   }
 }
+
+
+// Look in the process table for an UNUSED proc.
+// If found, initialize state required to run in the kernel,
+// and return with p->lock held.
+// If there are no free procs, or a memory allocation fails, return 0.
+static struct proc*
+allocthread(uint64 size)
+{
+  struct proc *p;
+
+  for(p = proc; p < &proc[NPROC]; p++) {
+    acquire(&p->lock);
+    if(p->state == UNUSED) {
+      goto found;
+    } else {
+      release(&p->lock);
+    }
+  }
+  return 0;
+
+found:
+  p->pid = allocpid();
+  p->state = USED;
+
+  printf("\n%d", p->pid);
+
+  // Allocate a trapframe page.
+  if((p->trapframe = (struct trapframe *)kalloc()) == 0){
+    freeproc(p);
+    release(&p->lock);
+    return 0;
+  }
+
+  // Set up new context to start executing at forkret,
+  // which returns to user space.
+  memset(&p->context, 0, sizeof(p->context));
+  p->context.ra = (uint64)forkret;
+  p->context.sp = p->kstack + PGSIZE;
+
+  return p;
+}
+
+// Prepare new thread space, copying the process.
+// return to thread and start executing on this new stack.
+int
+clone(void *stack, uint64 size, uint64 tid)
+{
+  int i, pid;
+  struct proc *t;
+  struct proc *p = myproc();
+
+  // Allocate process.
+  if((t = allocthread(size)) == 0){
+    return -1;
+  }
+
+  t->pagetable = p->pagetable;
+
+  // map the trampoline code (for system call return)
+  // at the highest user virtual address.
+  // only the supervisor uses it, on the way
+  // to/from user space, so not PTE_U.
+  if(mappages(t->pagetable, TRAMPOLINE - (size * tid), PGSIZE,
+              (uint64)trampoline, PTE_R | PTE_X) < 0){
+    uvmfree(t->pagetable, 0);
+    return 0;
+  }
+
+  // map the trapframe just below TRAMPOLINE, for trampoline.S.
+  if(mappages(t->pagetable, TRAPFRAME - (size * tid), PGSIZE,
+              (uint64)(t->trapframe), PTE_R | PTE_W) < 0){
+    uvmunmap(t->pagetable, TRAMPOLINE - (size * tid), 1, 0);
+    uvmfree(t->pagetable, 0);
+    return 0;
+  }
+
+  t->tid = tid;
+  t->sz = p->sz;
+
+  // Cause clone to return 0 in the thread.
+  t->trapframe->a0 = 0;
+  t->trapframe->sp = (uint64) stack;
+
+  // store thread stack address
+  t->tstack = (uint64) stack;
+
+  // increment reference counts on open file descriptors.
+  for(i = 0; i < NOFILE; i++)
+    if(p->ofile[i])
+      t->ofile[i] = filedup(p->ofile[i]);
+  t->cwd = idup(p->cwd);
+
+  safestrcpy(t->name, p->name, sizeof(p->name));
+  pid = t->pid;
+
+  release(&t->lock);
+
+  acquire(&wait_lock);
+  t->parent = p;
+  release(&wait_lock);
+
+  acquire(&t->lock);
+  t->state = RUNNABLE;
+  release(&t->lock);
+
+  //increament the thread count
+  p->t_cnt++;
+
+  return pid;
+}
+
