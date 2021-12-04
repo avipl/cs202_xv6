@@ -3,14 +3,10 @@
 
 int thread_create(void *(*start_routine)(void*), void *arg){
     void *stack = malloc(PGSIZE);
-    uint pid = clone(stack, PGSIZE, *((uint64*)arg));
-
-    if(pid == 0){
-        (*start_routine)(arg);
-        exit(0);
-    }
-
-   return 1;
+    uint size = 8;
+    int tid = clone(stack, size);
+    (*start_routine)(arg);
+    return tid;
 }
 
 void lock_acquire(struct lock_t *lk)
@@ -19,7 +15,7 @@ void lock_acquire(struct lock_t *lk)
   //   a5 = 1
   //   s1 = &lk->locked
   //   amoswap.w.aq a5, a5, (s1)
-  while(__sync_lock_test_and_set(&lk->is_locked, 1) != 0)
+  while(__sync_lock_test_and_set(&lk->locked, 1) != 0)
     ;
 
   // Tell the C compiler and the processor to not move loads or stores
@@ -46,10 +42,11 @@ void lock_release(struct lock_t *lk)
   // On RISC-V, sync_lock_release turns into an atomic swap:
   //   s1 = &lk->locked
   //   amoswap.w zero, zero, (s1)
-  __sync_lock_release(&lk->is_locked);
+  __sync_lock_release(&lk->locked);
+
 }
 
 void lock_init(struct lock_t *lk)
 {
-	lk->is_locked = 0;
+	lk->locked = 0;
 }
