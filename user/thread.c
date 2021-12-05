@@ -2,10 +2,14 @@
 #define PGSIZE 4096
 
 int thread_create(void *(*start_routine)(void*), void *arg){
+  //allocate user stack in advance
     void *stack = malloc(PGSIZE);
-    uint size = 8;
+    int size = 8;
     int tid = clone(stack, size);
-    (*start_routine)(arg);
+  // only the child thread will launch start_routine
+    if(tid == 0){
+      (*start_routine)(arg);
+    }
     return tid;
 }
 

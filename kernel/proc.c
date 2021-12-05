@@ -119,6 +119,7 @@ allocproc(void)
 found:
   p->pid = allocpid();
   p->tid = 0;
+  p->t_cnt = 0;
   p->state = USED;
 
   // Allocate a trapframe page.
@@ -145,6 +146,9 @@ found:
   return p;
 }
 
+// A modified veersion of allocthread, thread can be treated as a lightweight process.
+// allocate pid, tid, trapframe, share the pagetable
+
 static struct proc*
 allocthread(struct proc *parent)
 {
@@ -162,18 +166,29 @@ allocthread(struct proc *parent)
 
 found:
   p->pid = allocpid();
-  p->tid = parent->t_cnt;
-  p->state = USED;
+  //calculate tid
   parent->t_cnt++;
+  p->tid = parent->t_cnt;
+
+  p->state = USED;
   // Allocate a trapframe page.
   if((p->trapframe = (struct trapframe *)kalloc()) == 0){
     freeproc(p);
     release(&p->lock);
     return 0;
   }
+  // Just share the page table instead of create a new one
+  p->pagetable = parent->pagetable;
 
-  // An empty user page table.
-  p->pagetable = proc_pagetable(p);
+  // p->pagetable = parent->pagetable;
+
+  // Map child trapframe below parent's trapframe
+   if(mappages(p->pagetable, TRAPFRAME - (p->tid*PGSIZE), PGSIZE,
+              (uint64)(p->trapframe), PTE_R | PTE_W) < 0){
+    uvmunmap(p->pagetable, TRAMPOLINE-(p->tid*PGSIZE), 1, 0);
+    uvmfree(p->pagetable, 0);
+    return 0;
+  }
   if(p->pagetable == 0){
     freeproc(p);
     release(&p->lock);
@@ -198,11 +213,20 @@ freeproc(struct proc *p)
   if(p->trapframe)
     kfree((void*)p->trapframe);
   p->trapframe = 0;
-  if(p->pagetable)
-    proc_freepagetable(p->pagetable, p->sz);
+  if(p->pagetable){
+    //if it's parent, free the entire pagetable
+    if(p->tid == 0){
+      proc_freepagetable(p->pagetable, p->sz);
+    }else{
+    //if it's child, unmap child's trapframe so parent can free page table later
+      uvmunmap(p->pagetable, TRAPFRAME - (p->tid*PGSIZE), 1, 0);
+    }
+  }
   p->pagetable = 0;
   p->sz = 0;
   p->pid = 0;
+  p->tid = 0;
+  p->t_cnt = 0;
   p->parent = 0;
   p->name[0] = 0;
   p->chan = 0;
@@ -225,26 +249,18 @@ proc_pagetable(struct proc *p)
   // at the highest user virtual address.
   // only the supervisor uses it, on the way
   // to/from user space, so not PTE_U.
-  if(p->tid == 0){
-    if(mappages(pagetable, TRAMPOLINE, PGSIZE,
-                (uint64)trampoline, PTE_R | PTE_X) < 0){
-      uvmfree(pagetable, 0);
-      return 0;
-    }
+  if(mappages(pagetable, TRAMPOLINE, PGSIZE,
+              (uint64)trampoline, PTE_R | PTE_X) < 0){
+    uvmfree(pagetable, 0);
+    return 0;
   }
-  else{
-
-  }
-  // printf("%d\n",p->tid);
   // map the trapframe just below TRAMPOLINE, for trampoline.S.
-  if(mappages(pagetable, TRAPFRAME - (p->tid * PGSIZE), PGSIZE,
+  if(mappages(pagetable, TRAPFRAME, PGSIZE,
               (uint64)(p->trapframe), PTE_R | PTE_W) < 0){
     uvmunmap(pagetable, TRAMPOLINE, 1, 0);
     uvmfree(pagetable, 0);
     return 0;
   }
-  // printf("222222222222222\n");
-
   return pagetable;
 }
 
@@ -364,6 +380,59 @@ fork(void)
   np->state = RUNNABLE;
   release(&np->lock);
 
+  return pid;
+}
+
+// Prepare new thread space, copying the process.
+// return to thread and start executing on this new stack.
+int
+clone(void *stack, int size)
+{
+  int i, pid;
+  struct proc *t;
+  struct proc *p = myproc();
+  // Allocate thread
+  if((t = allocthread(p)) == 0){
+    return -1;
+  }
+
+
+  // *(t->pagetable) = *(p->pagetable);
+
+  t->sz = p->sz;
+  //copy the trapframe
+  *(t->trapframe) = *(p->trapframe);
+
+  // Cause clone to return 0 in the thread.
+  t->trapframe->a0 = 0;
+
+
+  for(i = 0; i < NOFILE; i++)
+    if(p->ofile[i])
+      t->ofile[i] = filedup(p->ofile[i]);
+  t->cwd = idup(p->cwd);
+
+  safestrcpy(t->name, p->name, sizeof(p->name));
+
+  pid = t->pid;
+  release(&t->lock); 
+
+  acquire(&wait_lock);
+  t->parent = p;
+  release(&wait_lock);
+
+  //copy parent stack to child stack
+  if(copyout(t->pagetable, (uint64)stack, (char*)&(p->trapframe->sp), size*sizeof(uint64)) < 0){
+    printf("copy failed!\n");
+  }
+  // printf("Stack copied!\n");
+  //Now child stack base pointer can poinert to stack 
+  t->trapframe->sp = (uint64)stack;
+
+  acquire(&t->lock);
+  t->state = RUNNABLE;
+  release(&t->lock);
+  
   return pid;
 }
 
@@ -702,55 +771,5 @@ procdump(void)
     printf("%d %s %s", p->pid, state, p->name);
     printf("\n");
   }
-}
-
-// Prepare new thread space, copying the process.
-// return to thread and start executing on this new stack.
-int
-clone(void *stack, int size)
-{
-  int i, pid;
-  struct proc *t;
-  struct proc *p = myproc();
-  // Allocate process.
-  if((t = allocthread(p)) == 0){
-    return -1;
-  }
-
-  t->sz = p->sz;
-  t->parent = p;
-  *t->trapframe = *p->trapframe;
-  t->pagetable = p->pagetable;
-
-  // Cause clone to return 0 in the thread.
-  t->trapframe->a0 = 0;
-
-  // step 2: use the same file descripter
-  // increment reference counts on open file descriptors.
-  for(i = 0; i < NOFILE; i++)
-    if(p->ofile[i])
-      t->ofile[i] = filedup(p->ofile[i]);
-  t->cwd = idup(p->cwd);
-
-  safestrcpy(t->name, p->name, sizeof(p->name));
-
-  release(&t->lock); 
-  acquire(&wait_lock);
-  t->parent = p;
-  release(&wait_lock);
-
-  acquire(&t->lock);
-  t->state = RUNNABLE;
-  release(&t->lock);
-
-  acquire(&wait_lock);
-
-  t->state = RUNNABLE;
-
-  // t->trapframe->sp = p->trapframe->kernel_sp;
-  pid = t->pid;
-  release(&wait_lock);
-
-  return pid;
 }
 
