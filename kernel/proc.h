@@ -48,7 +48,7 @@ struct trapframe {
   /*  24 */ uint64 epc;           // saved user program counter
   /*  32 */ uint64 kernel_hartid; // saved kernel tp
   /*  40 */ uint64 ra;
-  /*  48 */ uint64 sp;
+  /*  48 */ uint64 sp;  // stack base pointer
   /*  56 */ uint64 gp;
   /*  64 */ uint64 tp;
   /*  72 */ uint64 t0;
@@ -92,14 +92,13 @@ struct proc {
   int killed;                  // If non-zero, have been killed
   int xstate;                  // Exit status to be returned to parent's wait
   int pid;                     // Process ID
-  int tid;
+  int tid;                     // Thread ID
 
   // wait_lock must be held when using this:
   struct proc *parent;         // Parent process
 
   // these are private to the process, so p->lock need not be held.
   uint64 kstack;               // Virtual address of kernel stack
-  uint64 tstack;               // Virtual address of thread stack
   uint64 sz;                   // Size of process memory (bytes)
   pagetable_t pagetable;       // User page table
   struct trapframe *trapframe; // data page for trampoline.S

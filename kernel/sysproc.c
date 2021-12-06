@@ -99,12 +99,11 @@ sys_uptime(void)
 uint64
 sys_clone(void)
 {
-  void *stack = 0;
+  uint64 stack;
   int size;
-  int tid;
-  argaddr(0, (uint64 *)stack);
-  argint(1, &size);
-  argint(1, &tid);
 
-  return clone(stack, size, tid); 
+  argaddr(0, &stack);
+  argint(1, &size);
+
+  return clone((void*)stack, size); 
 }
