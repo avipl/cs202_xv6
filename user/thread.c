@@ -4,7 +4,7 @@
 int thread_create(void *(*start_routine)(void*), void *arg){
   //allocate user stack in advance
     void *stack = malloc(PGSIZE);
-    int size = 8;
+    int size = PGSIZE/sizeof(uint64);
     int tid = clone(stack, size);
   // only the child thread will launch start_routine
     if(tid == 0){

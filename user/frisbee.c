@@ -17,7 +17,7 @@ int main ( int argc , char * argv []){
     }
 	//wait children threads to exit()
 	while(wait(0) >= 0);
-	// printf("Done!\n");
+	printf("Simulation of Frisbee game has finished, %d round were palyed in total\n", max_turns);
 	exit(0);
 }
 
